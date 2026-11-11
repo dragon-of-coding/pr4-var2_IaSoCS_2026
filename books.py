@@ -78,12 +78,12 @@ def search_by_author(
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Поисковый запрос не может быть пустым")
 
-    needle = query.strip().casefold()
+    needle = query.strip()
 
     return [
         book
         for book in books
-        if needle in book["author"].casefold()
+        if needle in book["author"]
     ]
 
 
