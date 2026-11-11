@@ -1,0 +1,14 @@
+# Local data
+books.json
+
+# Temporary output
+dist/
+deploy/
+deployment.txt
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/

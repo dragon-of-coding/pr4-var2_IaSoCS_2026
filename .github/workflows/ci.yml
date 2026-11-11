@@ -1,0 +1,157 @@
+
+name: Book Catalogue CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - 'docs/**'
+    tags:
+      - 'v*'
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Show Python version and commit
+        run: |
+          docker run --rm python:3.11.10-slim python --version
+          echo "Commit: $GITHUB_SHA"
+
+      - name: Validate required files and APP_PORT
+        env:
+          APP_PORT: ${{ vars.APP_PORT }}
+        run: |
+          test -f README.md
+          test -s app.py
+          test -s books.py
+          test -f books.json.example
+          test -f Dockerfile
+          test "$APP_PORT" = "8102"
+
+      - name: Compile Python files
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            python:3.11.10-slim \
+            sh -c 'python -m compileall -q . && python -m py_compile app.py books.py tests/*.py scripts/*.py'
+
+
+  unit_tests:
+    needs: validate
+
+    if: ${{ !startsWith(github.ref, 'refs/heads/docs/') && !startsWith(github.head_ref, 'docs/') }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run 17 unit tests
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            python:3.11.10-slim \
+            python -m unittest discover -s tests -v
+
+
+  package:
+    needs: [validate, unit_tests]
+
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build dist and manifest
+        run: |
+          mkdir -p dist
+          cp books.py README.md Dockerfile books.json.example dist/
+
+          {
+            echo "CI_COMMIT_SHA=$GITHUB_SHA"
+            echo "CI_PIPELINE_ID=$GITHUB_RUN_ID"
+            echo "FILES:"
+            find dist -maxdepth 1 -type f ! -name manifest.txt -printf '%f\n' | sort
+          } > dist/manifest.txt
+
+          cat dist/manifest.txt
+
+      - name: Upload artifact for 7 days
+        uses: actions/upload-artifact@v7
+        with:
+          name: books-dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+
+  deploy_test:
+    needs: package
+
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: test/books
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v7
+
+      - name: Download packaged files
+        uses: actions/download-artifact@v8
+        with:
+          name: books-dist
+          path: deploy/test
+
+      - name: Check deploy token without printing it
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::error::DEPLOY_TOKEN is missing"
+            exit 1
+          fi
+
+          echo "DEPLOY_TOKEN is configured"
+
+      - name: Smoke test from artifact
+        run: |
+          docker run --rm \
+            -e GITHUB_SHA \
+            -e GITHUB_RUN_ID \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            python:3.11.10-slim \
+            python scripts/smoke_test.py deploy/test
+
+      - name: Upload deployment report
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployment-report
+          path: deployment.txt
+          retention-days: 7
+          if-no-files-found: error

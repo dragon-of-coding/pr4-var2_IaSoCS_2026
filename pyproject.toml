@@ -1,0 +1,7 @@
+[project]
+name = "pr4-var2"
+version = "0.1.0"
+description = "Book catalogue for CI/CD practice"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = []
